@@ -260,6 +260,7 @@ def as_completed(fs, timeout=None):
                 f._waiters.remove(waiter)
 
 def yield_until_done(fs):
+    fs = sorted(fs, key=id)
     for f in fs:
         yield from f.yield_until_done()
 
