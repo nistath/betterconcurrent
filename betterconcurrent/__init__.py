@@ -14,6 +14,7 @@ from ._base import (FIRST_COMPLETED,
                     BrokenExecutor,
                     Future,
                     Executor,
+                    yield_until_done,
                     wait,
                     as_completed)
 
@@ -26,6 +27,7 @@ __all__ = (
     'BrokenExecutor',
     'Future',
     'Executor',
+    'yield_until_done',
     'wait',
     'as_completed',
     'ProcessPoolExecutor',

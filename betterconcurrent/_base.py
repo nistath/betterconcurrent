@@ -259,6 +259,10 @@ def as_completed(fs, timeout=None):
             with f._condition:
                 f._waiters.remove(waiter)
 
+def yield_until_done(fs):
+    for f in fs:
+        yield from f.yield_until_done()
+
 DoneAndNotDoneFutures = collections.namedtuple(
         'DoneAndNotDoneFutures', 'done not_done')
 def wait(fs, timeout=None, return_when=ALL_COMPLETED):
@@ -324,7 +328,6 @@ def _result_or_cancel(fut, timeout=None):
 
 
 def _blocked_future_notify_executor(future):
-    #
     executor = future._executor()
     if executor is not None:
         executor._blocked_future_done(future)
