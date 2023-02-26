@@ -5,6 +5,9 @@
 
 __author__ = 'Brian Quinlan (brian@sweetapp.com)'
 
+from collections import defaultdict
+import inspect
+import warnings
 from . import _base
 import itertools
 import queue
@@ -20,6 +23,7 @@ _shutdown = False
 # shutting down. Must be held while mutating _threads_queues and _shutdown.
 _global_shutdown_lock = threading.Lock()
 
+
 def _python_exit():
     global _shutdown
     with _global_shutdown_lock:
@@ -29,6 +33,7 @@ def _python_exit():
         q.put(None)
     for t, q in items:
         t.join()
+
 
 # Register for `_python_exit()` to be called just before joining all
 # non-daemon threads. This is used instead of `atexit.register()` for
@@ -43,6 +48,40 @@ if hasattr(os, 'register_at_fork'):
                         after_in_parent=_global_shutdown_lock.release)
 
 
+class _ContinuationStorage(object):
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._continuations = []
+        self._shutdown = False
+
+    def append(self, continuation):
+        if self._shutdown:
+            return
+        with self._lock:
+            if self._shutdown:
+                return
+            self._continuations.append(continuation)
+
+    def drain(self, drain_fn):
+        if self._shutdown:
+            return
+        with self._lock:
+            if self._shutdown:
+                return
+            for continuation in self._continuations:
+                drain_fn(continuation)
+            self._continuations.clear()
+
+    def shutdown(self):
+        if self._shutdown:
+            return
+        with self._lock:
+            if self._shutdown:
+                return
+            self._shutdown = True
+            self._continuations.clear()
+
+
 class _WorkItem(object):
     def __init__(self, future, fn, args, kwargs):
         self.future = future
@@ -50,12 +89,15 @@ class _WorkItem(object):
         self.args = args
         self.kwargs = kwargs
 
-    def run(self):
+    def make_run_generator(self):
         if not self.future.set_running_or_notify_cancel():
             return
 
         try:
-            result = self.fn(*self.args, **self.kwargs)
+            if inspect.isgeneratorfunction(self.fn):
+                result = yield from self.fn(*self.args, **self.kwargs)
+            else:
+                result = self.fn(*self.args, **self.kwargs)
         except BaseException as exc:
             self.future.set_exception(exc)
             # Break a reference cycle with the exception 'exc'
@@ -79,20 +121,41 @@ def _worker(executor_reference, work_queue, join_tracker, initializer, initargs)
     try:
         while True:
             work_item = work_queue.get(block=True)
+            work_item_completed = False
             if work_item is not None:
-                work_item.run()
+                if inspect.isgenerator(work_item):
+                    generator = work_item
+                else:
+                    generator = work_item.make_run_generator()
+
                 # Delete references to object. See issue16284
                 del work_item
+
+                try:
+                    yielded_value = next(generator)
+                    if not isinstance(yielded_value, _ContinuationStorage):
+                        # TODO: bubble this up to executor
+                        warnings.warn(
+                            f'work item yielded unexpected value {yielded_value}')
+                    # store the continuation
+                    yielded_value.append(generator)
+                    del yielded_value
+                except StopIteration:
+                    work_item_completed = True
+                del generator
+
+            executor = executor_reference()
+
+            if work_item_completed:
+                # only remove from the join_tracker if the work item completed
                 join_tracker.remove()
 
                 # attempt to increment idle count
-                executor = executor_reference()
                 if executor is not None:
                     executor._idle_semaphore.release()
-                del executor
-                continue
+                    del executor
+                    continue
 
-            executor = executor_reference()
             # Exit if:
             #   - The interpreter is shutting down OR
             #   - The executor that owns the worker has been collected OR
@@ -135,9 +198,11 @@ class _JoinTracker(object):
     def wait(self, timeout=None):
         with self._join_condition:
             if self._remaining_work_items != 0:
-                self._join_condition.wait_for(lambda: self._remaining_work_items == 0, timeout=timeout)
+                self._join_condition.wait_for(
+                    lambda: self._remaining_work_items == 0, timeout=timeout)
             if self._remaining_work_items < 0:
                 raise RuntimeError('incorrect remaining_work_items count')
+
 
 class ThreadPoolExecutor(_base.Executor):
 
@@ -182,6 +247,8 @@ class ThreadPoolExecutor(_base.Executor):
                                     ("ThreadPoolExecutor-%d" % self._counter()))
         self._initializer = initializer
         self._initargs = initargs
+        self._blocked_continuations = {}
+        self._blocked_continuations_lock = threading.Lock()
 
     def submit(self, fn, /, *args, **kwargs):
         with self._shutdown_lock, _global_shutdown_lock:
@@ -189,12 +256,13 @@ class ThreadPoolExecutor(_base.Executor):
                 raise BrokenThreadPool(self._broken)
 
             if self._shutdown:
-                raise RuntimeError('cannot schedule new futures after shutdown')
+                raise RuntimeError(
+                    'cannot schedule new futures after shutdown')
             if _shutdown:
                 raise RuntimeError('cannot schedule new futures after '
                                    'interpreter shutdown')
 
-            f = _base.Future()
+            f = _base.Future(self)
             w = _WorkItem(f, fn, args, kwargs)
 
             self._join_tracker.add()
@@ -238,7 +306,30 @@ class ThreadPoolExecutor(_base.Executor):
                 except queue.Empty:
                     break
                 if work_item is not None:
-                    work_item.future.set_exception(BrokenThreadPool(self._broken))
+                    work_item.future.set_exception(
+                        BrokenThreadPool(self._broken))
+
+    def _track_blocked_future(self, future):
+        if self._blocked_continuations is None:
+            return
+        with self._blocked_continuations_lock:
+            if self._blocked_continuations is None:
+                return
+            storage = _ContinuationStorage()
+            self._blocked_continuations[future] = storage
+        return storage
+
+    def _blocked_future_done(self, future):
+        if self._blocked_continuations is None:
+            return
+        with self._blocked_continuations_lock:
+            if self._blocked_continuations is None:
+                return
+            storage = self._blocked_continuations.get(future, None)
+        if storage is None:
+            raise ValueError('called with unexpected future')
+        storage.drain(
+            lambda continuation: self._work_queue.put_nowait(continuation))
 
     def join(self, shutdown=True):
         self._join_tracker.wait()
@@ -249,6 +340,19 @@ class ThreadPoolExecutor(_base.Executor):
 
     def shutdown(self, wait=True, *, cancel_futures=False):
         with self._shutdown_lock:
+            if cancel_futures:
+                # shutdown the blocked continuations such that they
+                # may no longer be enqueued upon completion of any
+                # residual futures during the shutdown process
+
+                # we do this before self._shutdown = True
+                # to prevent any queueing by self._blocked_future_done
+                # during the shutdown process
+                with self._blocked_continuations_lock:
+                    for storage in self._blocked_continuations.values():
+                        storage.shutdown()
+                    self._blocked_continuations = None
+
             self._shutdown = True
             if cancel_futures:
                 # Drain all work items from the queue, and then cancel their

@@ -8,6 +8,7 @@ import logging
 import threading
 import time
 import types
+import weakref
 
 FIRST_COMPLETED = 'FIRST_COMPLETED'
 FIRST_EXCEPTION = 'FIRST_EXCEPTION'
@@ -322,10 +323,20 @@ def _result_or_cancel(fut, timeout=None):
         del fut
 
 
+def _blocked_future_notify_executor(future):
+    #
+    executor = future._executor()
+    if executor is not None:
+        executor._blocked_future_done(future)
+
+
+def _return_none():
+    return None
+
 class Future(object):
     """Represents the result of an asynchronous computation."""
 
-    def __init__(self):
+    def __init__(self, executor=None):
         """Initializes the future. Should not be called by clients."""
         self._condition = threading.Condition()
         self._state = PENDING
@@ -333,6 +344,10 @@ class Future(object):
         self._exception = None
         self._waiters = []
         self._done_callbacks = []
+        if executor is None:
+            self._executor = _return_none
+        else:
+            self._executor = weakref.ref(executor)
 
     def _invoke_callbacks(self):
         for callback in self._done_callbacks:
@@ -424,6 +439,24 @@ class Future(object):
             fn(self)
         except Exception:
             LOGGER.exception('exception calling callback for %r', self)
+
+    def yield_until_done(self):
+        if self.done():
+            return
+
+        executor = self._executor()
+        if executor is not None:
+            yield_me = executor._track_blocked_future(self)
+            del executor
+            if yield_me is not None:
+                self._done_callbacks.append(_blocked_future_notify_executor)
+                yield yield_me  # return control to worker
+                return
+
+        # executor does not support smart blocking on futures
+        with self._condition:
+            while not self.done():
+                self._condition.wait()
 
     def result(self, timeout=None):
         """Return the result of the call that the future represents.
@@ -578,6 +611,12 @@ class Executor(object):
         Returns:
             A Future representing the given call.
         """
+        raise NotImplementedError()
+
+    def _track_blocked_future(self, future):
+        return None
+
+    def _blocked_future_done(self, future):
         raise NotImplementedError()
 
     def map(self, fn, *iterables, timeout=None, chunksize=1):
