@@ -28,7 +28,7 @@ def search(executor: Executor, node: Node, target: int, found: threading.Event):
         return
 
     if node.get() == target:
-        print('found', target)
+        print("found", target)
         found.set()
         return
 
@@ -54,6 +54,6 @@ def test_failure():
     assert parallel_search(1, 215) == False
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_success()
     test_failure()
