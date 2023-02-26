@@ -94,6 +94,7 @@ def _python_exit():
     for t, _ in items:
         t.join()
 
+
 # Register for `_python_exit()` to be called just before joining all
 # non-daemon threads. This is used instead of `atexit.register()` for
 # compatibility with subinterpreters, which no longer support daemon threads.
@@ -115,11 +116,14 @@ _MAX_WINDOWS_WORKERS = 63 - 2
 
 # Hack to embed stringification of remote traceback in local traceback
 
+
 class _RemoteTraceback(Exception):
     def __init__(self, tb):
         self.tb = tb
+
     def __str__(self):
         return self.tb
+
 
 class _ExceptionWithTraceback:
     def __init__(self, exc, tb):
@@ -129,12 +133,15 @@ class _ExceptionWithTraceback:
         # contain references to all the objects in the exception scope
         self.exc.__traceback__ = None
         self.tb = '\n"""\n%s"""' % tb
+
     def __reduce__(self):
         return _rebuild_exc, (self.exc, self.tb)
+
 
 def _rebuild_exc(exc, tb):
     exc.__cause__ = _RemoteTraceback(tb)
     return exc
+
 
 class _WorkItem(object):
     def __init__(self, future, fn, args, kwargs):
@@ -143,12 +150,14 @@ class _WorkItem(object):
         self.args = args
         self.kwargs = kwargs
 
+
 class _ResultItem(object):
     def __init__(self, work_id, exception=None, result=None, exit_pid=None):
         self.work_id = work_id
         self.exception = exception
         self.result = result
         self.exit_pid = exit_pid
+
 
 class _CallItem(object):
     def __init__(self, work_id, fn, args, kwargs):
@@ -160,6 +169,7 @@ class _CallItem(object):
 
 class _SafeQueue(Queue):
     """Safe Queue set exception to the future object linked to a job"""
+
     def __init__(self, max_size=0, *, ctx, pending_work_items, shutdown_lock,
                  thread_wakeup):
         self.pending_work_items = pending_work_items
@@ -639,7 +649,7 @@ class ProcessPoolExecutor(_base.Executor):
             if max_workers <= 0:
                 raise ValueError("max_workers must be greater than 0")
             elif (sys.platform == 'win32' and
-                max_workers > _MAX_WINDOWS_WORKERS):
+                  max_workers > _MAX_WINDOWS_WORKERS):
                 raise ValueError(
                     f"max_workers must be <= {_MAX_WINDOWS_WORKERS}")
 
@@ -654,7 +664,7 @@ class ProcessPoolExecutor(_base.Executor):
 
         # https://github.com/python/cpython/issues/90622
         self._safe_to_dynamically_spawn_children = (
-                self._mp_context.get_start_method(allow_none=False) != "fork")
+            self._mp_context.get_start_method(allow_none=False) != "fork")
 
         if initializer is not None and not callable(initializer):
             raise TypeError("initializer must be a callable")
@@ -743,8 +753,8 @@ class ProcessPoolExecutor(_base.Executor):
     def _launch_processes(self):
         # https://github.com/python/cpython/issues/90622
         assert not self._executor_manager_thread, (
-                'Processes cannot be fork()ed after the thread has started, '
-                'deadlock in the child processes could result.')
+            'Processes cannot be fork()ed after the thread has started, '
+            'deadlock in the child processes could result.')
         for _ in range(len(self._processes), self._max_workers):
             self._spawn_process()
 
@@ -764,7 +774,8 @@ class ProcessPoolExecutor(_base.Executor):
             if self._broken:
                 raise BrokenProcessPool(self._broken)
             if self._shutdown_thread:
-                raise RuntimeError('cannot schedule new futures after shutdown')
+                raise RuntimeError(
+                    'cannot schedule new futures after shutdown')
             if _global_shutdown:
                 raise RuntimeError('cannot schedule new futures after '
                                    'interpreter shutdown')
