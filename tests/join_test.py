@@ -1,6 +1,6 @@
 import threading
-import time
 from betterconcurrent import Executor, ThreadPoolExecutor
+
 
 class Counter:
     def __init__(self, init=0):
@@ -22,11 +22,13 @@ def countdown(executor: Executor, counter: Counter, n: int):
     counter.add(1)
     executor.submit(countdown, executor, counter, n - 1)
 
-N = 100
-with ThreadPoolExecutor(max_workers=1) as executor:
-    counter = Counter()
-    countdown(executor, counter, N)
-    executor.join()
 
-val = counter.read()
-assert val == N, f'got {val}, expected {N}'
+if __name__ == '__main__':
+    N = 100
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        counter = Counter()
+        countdown(executor, counter, N)
+        executor.join()
+
+    val = counter.read()
+    assert val == N, f'got {val}, expected {N}'
