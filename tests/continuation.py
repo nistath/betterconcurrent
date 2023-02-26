@@ -7,7 +7,7 @@ def wait_on_future(executor):
     return f.result()
 
 
-if __name__ == '__main__':
+def test_continuation():
     with ThreadPoolExecutor(max_workers=1) as executor:
         f = executor.submit(wait_on_future, executor)
         assert f.result() == 25

@@ -7,8 +7,9 @@ def wait_on_future(executor):
     return [f.result() for f in fs]
 
 
-if __name__ == '__main__':
+def test_multiple_continuations():
     with ThreadPoolExecutor(max_workers=1) as executor:
         f = executor.submit(wait_on_future, executor)
-        assert f.result() == [25, 125, 625, 3125, 15625, 78125, 390625, 1953125]
+        assert f.result() == [25, 125, 625, 3125,
+                              15625, 78125, 390625, 1953125]
         executor.join()

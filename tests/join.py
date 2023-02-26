@@ -23,7 +23,7 @@ def countdown(executor: Executor, counter: Counter, n: int):
     executor.submit(countdown, executor, counter, n - 1)
 
 
-if __name__ == '__main__':
+def test_join():
     N = 100
     with ThreadPoolExecutor(max_workers=1) as executor:
         counter = Counter()
@@ -31,4 +31,4 @@ if __name__ == '__main__':
         executor.join()
 
     val = counter.read()
-    assert val == N, f'got {val}, expected {N}'
+    assert val == N
