@@ -332,10 +332,14 @@ class ThreadPoolExecutor(_base.Executor):
             lambda continuation: self._work_queue.put_nowait(continuation))
 
     def join(self, shutdown=True):
+        # NOTE: It is undefined behavior to call shutdown
+        # concurrently with join.
+        # We could fix this if we notified the condition
+        # variable during a shutdown.
         self._join_tracker.wait()
         if shutdown:
-            # we can wait here because the queue is empty
-            # and none of the workers are busy
+            # we can wait=True here withuot blocking because the queue
+            # is empty and none of the workers are busy
             self.shutdown(wait=True)
 
     def shutdown(self, wait=True, *, cancel_futures=False):
