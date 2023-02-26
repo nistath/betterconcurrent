@@ -353,8 +353,9 @@ class ThreadPoolExecutor(_base.Executor):
                 # to prevent any queueing by self._blocked_future_done
                 # during the shutdown process
                 with self._blocked_continuations_lock:
-                    for storage in self._blocked_continuations.values():
-                        storage.shutdown()
+                    if self._blocked_continuations is not None:
+                        for storage in self._blocked_continuations.values():
+                            storage.shutdown()
                     self._blocked_continuations = None
 
             self._shutdown = True
