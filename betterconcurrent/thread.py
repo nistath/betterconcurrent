@@ -66,7 +66,7 @@ class _WorkItem(object):
     __class_getitem__ = classmethod(types.GenericAlias)
 
 
-def _worker(executor_reference, work_queue, initializer, initargs):
+def _worker(executor_reference, work_queue, join_tracker, initializer, initargs):
     if initializer is not None:
         try:
             initializer(*initargs)
@@ -83,6 +83,7 @@ def _worker(executor_reference, work_queue, initializer, initargs):
                 work_item.run()
                 # Delete references to object. See issue16284
                 del work_item
+                join_tracker.remove()
 
                 # attempt to increment idle count
                 executor = executor_reference()
@@ -114,6 +115,29 @@ class BrokenThreadPool(_base.BrokenExecutor):
     Raised when a worker thread in a ThreadPoolExecutor failed initializing.
     """
 
+
+class _JoinTracker(object):
+    def __init__(self):
+        self._remaining_work_items = 0
+        self._join_condition = threading.Condition()
+
+    def add(self, n=1):
+        with self._join_condition:
+            self._remaining_work_items += n
+
+    def remove(self, n=1):
+        with self._join_condition:
+            # assert self._remaining_work_items >= n
+            self._remaining_work_items -= n
+            if self._remaining_work_items <= 0:
+                self._join_condition.notify_all()
+
+    def wait(self, timeout=None):
+        with self._join_condition:
+            if self._remaining_work_items != 0:
+                self._join_condition.wait_for(lambda: self._remaining_work_items == 0, timeout=timeout)
+            if self._remaining_work_items < 0:
+                raise RuntimeError('incorrect remaining_work_items count')
 
 class ThreadPoolExecutor(_base.Executor):
 
@@ -148,6 +172,7 @@ class ThreadPoolExecutor(_base.Executor):
 
         self._max_workers = max_workers
         self._work_queue = queue.SimpleQueue()
+        self._join_tracker = _JoinTracker()
         self._idle_semaphore = threading.Semaphore(0)
         self._threads = set()
         self._broken = False
@@ -172,6 +197,7 @@ class ThreadPoolExecutor(_base.Executor):
             f = _base.Future()
             w = _WorkItem(f, fn, args, kwargs)
 
+            self._join_tracker.add()
             self._work_queue.put(w)
             self._adjust_thread_count()
             return f
@@ -194,6 +220,7 @@ class ThreadPoolExecutor(_base.Executor):
             t = threading.Thread(name=thread_name, target=_worker,
                                  args=(weakref.ref(self, weakref_cb),
                                        self._work_queue,
+                                       self._join_tracker,
                                        self._initializer,
                                        self._initargs))
             t.start()
@@ -212,6 +239,13 @@ class ThreadPoolExecutor(_base.Executor):
                     break
                 if work_item is not None:
                     work_item.future.set_exception(BrokenThreadPool(self._broken))
+
+    def join(self, shutdown=True):
+        self._join_tracker.wait()
+        if shutdown:
+            # we can wait here because the queue is empty
+            # and none of the workers are busy
+            self.shutdown(wait=True)
 
     def shutdown(self, wait=True, *, cancel_futures=False):
         with self._shutdown_lock:
