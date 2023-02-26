@@ -7,6 +7,11 @@ The changes currently pertain to `ThreadPoolExecutor`. The architecture of `Proc
 
 All exported types are backwards compatible and will behave the same as `concurrent.futures`, meaning that this package is a safe drop-in replacement.
 
+You can install this package with
+```
+pip install betterconcurrent
+```
+
 ## `Future`
 
 Futures are now aware, through a weakref, of the executor that generated them.
