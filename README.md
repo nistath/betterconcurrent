@@ -46,7 +46,7 @@ Where `shutdown` would stop the computation in its tracks and prevent it from fu
 #### Example
 
 A search for a particular node in a tree can be parallelized by recursively spawning a subtask for each of the children. We might not care to return the value to the caller, but rather print a message or assign the result to a shared variable.
-See [tree_search.py](tests/tree_search.py) for an example of a parallel tree search!
+See [tree_search.py](tests/test_tree_search.py) for an example of a parallel tree search!
 
 ## To do
 
